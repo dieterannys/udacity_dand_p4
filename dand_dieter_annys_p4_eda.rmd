@@ -13,12 +13,14 @@ library(reshape2)
 library(dplyr)
 # psych: for the mat.sort function applied to correlation matrices
 library(psych)
+# corrplot: for plotting a correlationmatrix
+library(corrplot)
 
 ```
 
 ```{r echo=FALSE, Load_the_Data}
 # Change working directory if necessary
-setwd("~/Dropbox/work/personal/active/1702_udacity_dand/projects/p4")
+# setwd("~/Dropbox/work/personal/active/1702_udacity_dand/projects/p4")
 # Load the Data
 wine <- read.csv('wineQualityWhites.csv')
 ```
@@ -76,6 +78,8 @@ Output variable (based on sensory data):
 
 12. quality (score between 0 and 10)
 
+## Quality Histogram
+
 ```{r echo=FALSE, Univariate_Plots_2}
 ggplot(data = wine, aes(x = quality)) +
 	geom_bar() + 
@@ -84,6 +88,8 @@ ggplot(data = wine, aes(x = quality)) +
 ```
 
 In the bar chart above we see the 'quality' variable. It shows a clear normal distribution.
+
+## Input Variables
 
 All other variables are numerical, and therefore something like a histogram will be useful to visualize each. To avoid being dependent on binsize however, I decide to plot density plots for each variable.
 
@@ -126,6 +132,8 @@ for (name in names(wine)) {
 grid.arrange(grobs = g, ncol = 2)
 ```
 
+## Removing Outliers
+
 Some variables have a large amount of outliers according to the boxplot stats. Where the rug plot still visually shows a dense amount of values, I decide to not remove the outliers. I do want to eliminate values that are very off. For that, I go through the dataset, and eliminate all values that fall outside the 99% interval. After that I plot all variables again.
 
 I also add a variable to the set, namely bound sulfur dioxide which is the difference between total and free sulfur dioxide.
@@ -156,6 +164,13 @@ grid.arrange(grobs = g, ncol = 2)
 ```
 
 All plots show that almost all data is still included, so I decide to continue with the filtered dataset. 8% of the data was filtered out.
+
+Some observations:
+
+- Most variables show a fairly unskewed distribution
+- Citric acid almost has a bit of a bimodal distribution
+- Alcohol is negatively skewed
+- Residual sugar as well, showing a large amount of datapoints with similar values near 0.
 
 # Univariate Analysis
 
@@ -194,42 +209,19 @@ Yes, because some values fell well outside their distributions, and in the end w
 
 # Bivariate Plots Section
 
+## Correlation Matrix Plot
+
 First I want to get an idea of the correlation between all variables. I do this by creating a heatmap of correlation values, as plotted below. This will hopefully point me in the direction of interesting relationships.
 
-```{r echo=FALSE, fig.width = 9, fig.height = 7, Bivariate_Plots_1}
-# Create a correlation matrix
-cors <- subset(wine.filt, select = -X) %>%
-    cor() %>%
-    mat.sort()
-# Set the upper triangle to 0 (in the resulting graph this will look white
-cors[upper.tri(cors, diag = TRUE)] <- 0
-# Flip the matrix around for readability
-cors <- cors[dim(cors)[1]:1,]
-# Turn the cors matrix into a long form dataframe so ggplot can process it
-cors <- cors %>%
-    melt() %>%
-    data.frame()
-
-# Plot the matrix
-ggplot(cors, aes(x = Var1,
-                 y = Var2,
-                 fill = value,
-				 label = sprintf("%0.2f", round(value, digits = 2)))) +
-    geom_tile() +
-    geom_text(color = "white") +
-    scale_fill_gradient2(low = hsv(0, .4, .6), mid = "white", high = hsv(0.6, .4, .6), limits = c(-1, 1)) +
-	theme_bw() +
-    theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
-          axis.title.x = element_blank(),
-          axis.title.y = element_blank()) +
-    ggtitle("Correlation Matrix")
-
-# Also print out the values related to quality, ordered by R
-cors.quality <- cor(wine.filt)[, "quality"] %>% round(2)
-as.matrix(cors.quality[order(cors.quality)][1:(length(cors.quality)-1)])
+```{r echo=FALSE, fig.width = 9, fig.height = 7, message=FALSE, warning=FALSE, Bivariate_Plots_1}
+wine.filt %>%
+  subset(select = -X) %>%
+  cor() %>%
+  mat.sort() %>%
+  corrplot()
 ```
 
-If we look at the numbers specifically related to the quality variable, we can see the strongest correlation with alcohol (.44), and inversely with density (-.31). However, there appears to exist a strong correlation between density and alcohol as well (-.81). Below all 3 bivariate relations are plotted.
+If we look at the numbers specifically related to the quality variable, we can see the **strongest correlation with alcohol (.44)**, and **inversely with density (-.31)**. However, there appears to exist a strong correlation between density and alcohol as well (-.81). Below all 3 bivariate relations are plotted.
 
 To draw preliminary conclusions: I'd say that instead of stating there is a relationship between quality and density, it is alcohol that is related to quality as well as to density. The intuitive idea that density would do very little to change taste/smell strengthens this conclusion.
 
@@ -245,33 +237,47 @@ layout <- rbind(c(1, 3), c(NA, 2))
 grid.arrange(p1, p2, p3, layout_matrix = layout)
 ```
 
-Other variables are correlated as well because they are related by definition, 
-e.g. total.sulfur.dioxide, bound.sulfur.dioxide and free.sulfur.dioxide,
-or the inverse relationship between acidity and pH:
+## Correlation Between Related Variables
 
-```{r echo=FALSE, fig.width = 9, fig.height = 5, Bivariate_Plots_3}
-t <- theme_bw()
-p1 <- ggplot(wine.filt, aes(x = total.sulfur.dioxide, y = free.sulfur.dioxide)) + geom_jitter(alpha = .1) +
-    geom_smooth(method = "lm") + t
-p2 <- ggplot(wine.filt, aes(x = fixed.acidity, y = pH)) + geom_jitter(alpha = .1) +
-    geom_smooth(method = "lm") + t
-grid.arrange(p1, p2, ncol = 2)
+Some variables are correlated as well because they are related by definition.
+
+**Example 1**: total.sulfur.dioxide, bound.sulfur.dioxide and free.sulfur.dioxide:
+
+```{r echo=FALSE, Bivariate_Plots_3a}
+ggplot(wine.filt, aes(x = total.sulfur.dioxide, y = free.sulfur.dioxide)) + geom_jitter(alpha = .1) +
+    geom_smooth(method = "lm") + theme_bw()
 ```
+
+Free sulfur dioxide is a component of total sulfur dioxide.
+
+**Example 2**: the inverse relationship between acidity and pH:
+
+```{r echo=FALSE, Bivariate_Plots_3b}
+ggplot(wine.filt, aes(x = fixed.acidity, y = pH)) + geom_jitter(alpha = .1) +
+    geom_smooth(method = "lm") + theme_bw()
+```
+
+pH is an expression of acidity by definition, so will show correlation with anything that expresses a value of acidity or basicity.
+
+## Correlations Between Supporting Variables
 
 Apart from bound.sulfur.dioxide and total.sulfur.dioxide, the largest
 correlation of all exists between density and residual sugar:
 
-```{r echo=FALSE, fig.width = 7, fig.height = 7, Bivariate_Plots_4}
-t <- theme_bw()
+```{r echo=FALSE, Bivariate_Plots_4}
 ggplot(wine.filt, aes(x = residual.sugar, y = density)) + geom_jitter(alpha = .1) +
-    geom_smooth(method = "lm") + t
+    geom_smooth(method = "lm") + theme_bw()
 ```
 
 This most likely because sugar has a large density and will drive up the 
 overall density significantly.
 
-And of course something can be said for non significant relationships, e.g. 
-citric acid does not appear to have any significant effect on quality.
+In the Univariate analysis we also noted a large bump near 0 for the Residual Sugar variable, which can be noted again in this plot.
+
+## Non Significant Relationships
+
+Of course something can be said from the correlation plot for non significant relationships, e.g. 
+citric acid does not appear to have any significant effect on quality. However, due to Simpson's Paradox we cannot just discount them yet without making a model.
 
 # Bivariate Analysis
 
@@ -298,17 +304,21 @@ The strongest relationship that wasn't a relationship purely by definition, was 
 
 # Multivariate Plots Section
 
+## Density vs Residual Sugar and Alcohol
+
 I first want to visualize the relationship between density and its two largest correlated features: residual sugar and alcohol.
 
 ```{r echo=FALSE, Multivariate_Plots_1}
 ggplot(wine.filt, aes(y = residual.sugar, x = alcohol, color = density)) +
-    geom_jitter(alpha = .2, size = 3) +
-    scale_color_gradient(low = hsv(0, 1, 1), high = hsv(0.6, 1, 1))
+    geom_jitter(alpha = .3, size = 3) +
+    scale_color_distiller(palette = "YlGnBu")
 ```
 
 First of all, this visualization clearly shows more alcohol results in lower density, and more residual sugar results in higher density.
 
 It also shows that a wine with high levels of residual sugar is less likely to contain a high percentage of alcohol and vice versa. This was already shown from the correlation matrix in the previous section, showing a fairly strong negative relationship between the two.
+
+## Linear Model
 
 Next, I want to make a linear model based on the strongest features observed in the previous section
 
@@ -325,17 +335,40 @@ As we can see, the correlation with density has already been greatly reduced bec
 
 Equally, other correlations have gone down significantly as well. Those that remain or have gone up, are:
 
-- free.sulfur.dioxide (0.14)
-- volatile.acidity (-0.22)
+1. **free.sulfur.dioxide (0.14)**
 
-```{r echo=FALSE, Multivariate_Plots_3}
-ggplot(wine.filt, aes(volatile.acidity, quality.residual)) + geom_point(alpha = .2)
-ggplot(wine.filt, aes(free.sulfur.dioxide, quality.residual)) + geom_point(alpha = .2)
+First a plot of quality vs free sulfur dioxide with the influence of alcohol included:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Multivariate_Plots_3a}
 ggplot(wine.filt, aes(color = alcohol, y = quality, x = free.sulfur.dioxide)) +
-    geom_jitter(alpha = .1, size = 4) +
-    scale_color_gradient2(low = "blue", mid = "white", high = "red", midpoint = 11) +
+    geom_jitter(alpha = .2, size = 3) +
+    scale_color_distiller(palette = "YlGnBu") +
 	geom_smooth()
 ```
+
+A slight bump is noticed around a value of 35 for free.sulfur.dioxide where the quality is highest. Below this value, there's a drop off in quality.
+
+The next plot shows quality.residual (with alcohol taken out) vs free.sulfur dioxide:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Multivariate_Plots_3b}
+ggplot(wine.filt, aes(y = quality.residual, x = free.sulfur.dioxide)) +
+    geom_jitter(alpha = .2, size = 3) +
+	geom_smooth()
+```
+
+As we can see, compared to the first graph, when taking alcohol out of the equation, a slight upward trend can now be spotted between quality and free.sulfur.dioxide.
+
+2. **volatile.acidity (-0.22)**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Multivariate_Plots_3c}
+ggplot(wine.filt, aes(y = quality.residual, x = volatile.acidity)) +
+    geom_jitter(alpha = .2, size = 3) +
+	geom_smooth()
+```
+
+Also here, there is a slight decrease in quality as volatile.acidity goes up.
+
+What I've done until now, taking the effect of another variable X2 out of a variable X1 and looked at it's effect on Y, is what a linear model does in general, so from here on I continue with generating a proper linear model.
 
 The first model I make is only based on alcohol
 
@@ -344,6 +377,8 @@ wine.filt <- subset(wine.filt, select=-quality.residual)
 m1 <- lm(quality ~ alcohol, wine.filt)
 summary(m1)
 ```
+
+As this model shows, the alcohol level is a highly significant factor when it comes to quality.
 
 Now we'll add the influence of residual sugar to the model.
 
@@ -413,9 +448,9 @@ make sure you justify why you chose each plot by describing what it shows.
 
 ### Plot One
 ```{r echo=FALSE, fig.width = 7, fig.height = 6, Plot_One}
-ggplot(wine.filt, aes(y = residual.sugar, x = alcohol, color = density, size = density)) +
-  geom_jitter(alpha = .1) +
-  scale_color_gradient(low = hsv(0, 1, 1), high = hsv(0.6, 1, 1)) +
+ggplot(wine.filt, aes(y = residual.sugar, x = alcohol, color = density)) +
+  geom_jitter(alpha = .3, size = 2) +
+  scale_color_distiller(palette = "YlGnBu") +
   theme_bw() +
   ggtitle("Residual Sugar vs Alcohol Level") +
   xlab("Alcohol [Vol %]") +
@@ -436,19 +471,62 @@ Some observations in this graph:
 - Density is the highest with high amounts of residual sugar and low amounts of alcohol. Vice versa, density is the lowest with low residual sugar and high alcohol.
 
 ### Plot Two
-```{r echo=FALSE, Plot_Two}
-
+```{r echo=FALSE, message=FALSE, warning=FALSE, Plot_Two}
+wine.filt$quality.residual <- lm(quality ~ alcohol, wine.filt)$residuals
+ggplot(wine.filt, aes(color = alcohol, y = quality, x = free.sulfur.dioxide)) +
+    geom_jitter(alpha = .1, size = 4) +
+    scale_color_distiller(palette = "YlGnBu") +
+	geom_smooth() +
+  theme_bw() +
+  ggtitle("Quality vs Free Sulfur Dioxide") +
+  xlab("Free Sulfur Dioxide [mg / dm^3]") +
+  ylab("Quality [Score]")
 ```
 
 ### Description Two
+The graph shows the following information:
 
+- Y (dependent variable): Quality score
+- X (independent variable): Free Sulfur Dioxide
+- Color: Alcohol volume percentage
+
+Some observations in this graph:
+
+- Quality seems to drop below average for very low values of free sulfur dioxide. Then comes a maximum quality at about 35 mg / dm^3 after which quality drops off a bit again.
+- Alcohol still shows a nice trend going up together with quality
 
 ### Plot Three
-```{r echo=FALSE, Plot_Three}
-
+```{r echo=FALSE, fig.width = 7, fig.height = 7, Plot_Three}
+p1 <- ggplot(wine.filt, aes(x = quality, y = density)) + geom_jitter(alpha = .1) +
+    geom_smooth(method = "lm") +
+  theme_bw() +
+  xlab("Quality [Score]") +
+  ylab("Density [g / cm^3]")
+p2 <- ggplot(wine.filt, aes(y = quality, x = alcohol)) + geom_jitter(alpha = .1) +
+    geom_smooth(method = "lm") +
+  theme_bw() +
+  xlab("Alcohol [Vol %]") +
+  ylab("Quality [Score]")
+p3 <- ggplot(wine.filt, aes(x = alcohol, y = density)) + geom_jitter(alpha = .1) +
+    geom_smooth(method = "lm") +
+  theme_bw() +
+  xlab("") +
+  ylab("")
+layout <- rbind(c(1, 3), c(NA, 2))
+grid.arrange(p1, p2, p3, layout_matrix = layout, top = "Density vs Alcohol vs Quality")
 ```
 
 ### Description Three
+
+This graph shows 3 relationships, each between 2 of the following 3:
+
+- Quality
+- Alcohol
+- Density
+
+Some observations in this graph:
+
+- It simply serves to show that all these 3 are correlated with eachother. Density and Alcohol are highly correlated and Quality is correlated with both Alcohol and Density, either directly or indirectly.
 
 ------
 
