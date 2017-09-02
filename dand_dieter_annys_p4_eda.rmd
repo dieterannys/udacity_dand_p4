@@ -1,0 +1,461 @@
+White Wine Dataset Exploration by Dieter Annys
+========================================================
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, packages}
+# Load all of the packages that you end up using in your analysis in this code
+# chunk.
+
+library(ggplot2)
+library(knitr)
+library(gridExtra)
+library(reshape2)
+# dplyr: for more readable pipelines using the %>% operator
+library(dplyr)
+# psych: for the mat.sort function applied to correlation matrices
+library(psych)
+
+```
+
+```{r echo=FALSE, Load_the_Data}
+# Change working directory if necessary
+setwd("~/Dropbox/work/personal/active/1702_udacity_dand/projects/p4")
+# Load the Data
+wine <- read.csv('wineQualityWhites.csv')
+```
+
+The dataset I'm about to explore was taken from the following reference:
+
+P. Cortez, A. Cerdeira, F. Almeida, T. Matos and J. Reis. 
+Modeling wine preferences by data mining from physicochemical properties.
+In Decision Support Systems, Elsevier, 47(4):547-553. ISSN: 0167-9236.
+
+As quoted from the original information bundled with the dataset:
+
+"In the above reference, two datasets were created, using red and white wine samples. The inputs include objective tests (e.g. PH values) and the output is based on sensory data (median of at least 3 evaluations made by wine experts). Each expert graded the wine quality between 0 (very bad) and 10 (very excellent)."
+
+The following analysis is done on the white wine dataset.
+
+# Univariate Plots Section
+
+First, I'll have a look at what variables are contained in the dataset:
+
+```{r echo=FALSE, Univariate_Plots_1}
+str(wine)
+sprintf("%d complete cases in dataset", sum(complete.cases(wine)))
+```
+
+The dataset does not contain any incomplete records.
+
+Apart from variable X, which seems to be a sequential ID value, I'll look for explanations for each variable in the dataset information:
+
+Input variables (based on physicochemical tests):
+
+1. fixed acidity (tartaric acid - g / dm^3): most acids involved with wine or fixed or nonvolatile (do not evaporate readily)
+
+2. volatile acidity (acetic acid - g / dm^3): the amount of acetic acid in wine, which at too high of levels can lead to an unpleasant, vinegar taste
+
+3. citric acid (g / dm^3): found in small quantities, citric acid can add 'freshness' and flavor to wines
+
+4. residual sugar (g / dm^3): the amount of sugar remaining after fermentation stops, it's rare to find wines with less than 1 gram/liter and wines with greater than 45 grams/liter are considered sweet
+
+5. chlorides (sodium chloride - g / dm^3): the amount of salt in the wine
+
+6. free sulfur dioxide (mg / dm^3): the free form of SO2 exists in equilibrium between molecular SO2 (as a dissolved gas) and bisulfite ion; it prevents microbial growth and the oxidation of wine
+
+7. total sulfur dioxide (mg / dm^3): amount of free and bound forms of S02; in low concentrations, SO2 is mostly undetectable in wine, but at free SO2 concentrations over 50 ppm, SO2 becomes evident in the nose and taste of wine
+
+8. density (g / cm^3): the density of water is close to that of water depending on the percent alcohol and sugar content
+
+9. pH: describes how acidic or basic a wine is on a scale from 0 (very acidic) to 14 (very basic); most wines are between 3-4 on the pH scale
+
+10. sulphates (potassium sulphate - g / dm3): a wine additive which can contribute to sulfur dioxide gas (S02) levels, wich acts as an antimicrobial and antioxidant
+
+11. alcohol (% by volume): the percent alcohol content of the wine
+
+Output variable (based on sensory data): 
+
+12. quality (score between 0 and 10)
+
+```{r echo=FALSE, Univariate_Plots_2}
+ggplot(data = wine, aes(x = quality)) +
+	geom_bar() + 
+    scale_x_continuous(breaks = seq(min(wine$quality), max(wine$quality), 1)) +
+    ggtitle("Wine Quality Bar Chart")
+```
+
+In the bar chart above we see the 'quality' variable. It shows a clear normal distribution.
+
+All other variables are numerical, and therefore something like a histogram will be useful to visualize each. To avoid being dependent on binsize however, I decide to plot density plots for each variable.
+
+In the spirit of DRY, I made a function that will draw a chart containing the following elements:
+
+- Density plot
+
+- Lines marking boxplot stats (red): this to help me get a clearer idea of the skewedness of the variable
+
+- Line marking the mean value (green):
+
+- A rug plot, colorcoded with whether a point is considered an outlier or not
+
+```{r echo=FALSE, fig.width = 9, fig.height = 10, Univariate_Plots_3}
+# returnPlot will return a ggplot plot for the data and variable passed to it
+returnPlot <- function(data, name) {
+    vals <- data[[name]]
+    meanval <- mean(vals)
+    boxStats <- boxplot.stats(vals)
+    outliers <- vals %in% boxStats$out
+    ggplot() +
+        geom_density(mapping = aes(x = vals)) +
+        geom_vline(xintercept = boxStats$stats, color = "red") +
+        geom_vline(xintercept = meanval, color = "green") +
+        geom_rug(mapping = aes(x = vals, color = outliers)) +
+        ggtitle(name) +
+        theme(axis.title.x = element_blank(),
+              axis.title.y = element_blank(),
+              axis.ticks.y = element_blank(),
+			  axis.text.y = element_blank(),
+			  legend.position = "none")
+}
+# Use the defined function to create plots for all relevant variables
+g <- list()
+for (name in names(wine)) {
+	if (name %in% c("X", "quality")) next
+	g[[name]] <- returnPlot(wine, name)
+}
+# Print all plots to screen
+grid.arrange(grobs = g, ncol = 2)
+```
+
+Some variables have a large amount of outliers according to the boxplot stats. Where the rug plot still visually shows a dense amount of values, I decide to not remove the outliers. I do want to eliminate values that are very off. For that, I go through the dataset, and eliminate all values that fall outside the 99% interval. After that I plot all variables again.
+
+I also add a variable to the set, namely bound sulfur dioxide which is the difference between total and free sulfur dioxide.
+
+```{r echo=FALSE, fig.width = 9, fig.height = 10, Univariate_Plots_4}
+sprintf("%d records before filtering", length(wine$X))
+# Create a filtered dataset with all records containing any value outside its
+# variable's 99% interval taken out.
+filt <- rep(T, length(wine$X))
+for (name in names(wine)) {
+	if (name %in% c("X", "quality")) next
+    limits <- as.vector(quantile(wine[[name]], c(.005, .995)))
+    filt <- filt & wine[[name]] >= limits[1] & wine[[name]] <= limits[2]
+}
+wine.filt <- wine[filt,]
+# Create a new variable named bound.sulfur.dioxide
+wine.filt$bound.sulfur.dioxide <- wine.filt$total.sulfur.dioxide - wine.filt$free.sulfur.dioxide
+# Print some stats about the resulting dataset
+sprintf("%d records after filtering", length(wine.filt$X))
+sprintf("%0.1fpct of data removed", 100 * (length(wine$X) - length(wine.filt$X)) / length(wine$X))
+# Plot all returnPlot plots again with the filtered dataset
+g <- list()
+for (name in names(wine.filt)) {
+    if (name %in% c("X", "quality")) next
+    g[[name]] <- returnPlot(wine.filt, name)
+}
+grid.arrange(grobs = g, ncol = 2)
+```
+
+All plots show that almost all data is still included, so I decide to continue with the filtered dataset. 8% of the data was filtered out.
+
+# Univariate Analysis
+
+### What is the structure of your dataset?
+
+Each record of the dataset represents a white wine that was analysed and judged. The dataset contains a total of 4898 records.
+
+The variables measured for each wine are:
+
+- a variable X: sequential unique ID
+
+- a variable "quality" of type int, which was a subjective score given by winetasters to each wine in the dataset
+
+- 11 variables of type num, which were measured objective properties of each wine.
+
+### What is/are the main feature(s) of interest in your dataset?
+
+The quality variable. The interesting thing would be to find relationships between objective properties of a wine and its subjective quality.
+
+### What other features in the dataset do you think will help support your \
+investigation into your feature(s) of interest?
+
+Since quality will be a reflection of taste and smell, the only one I believe we can rule out as interesting factor is density. Other than that I'm not drawing any conclusions yet on what feature will be interesting to explore.
+
+### Did you create any new variables from existing variables in the dataset?
+
+Yes: bound.sulfur.dioxide = total.sulfur.dioxide - free.sulfur.dioxide
+
+The realization this might be needed came from further in the analysis when I saw that there was no correlation between quality and free.sulfur.dioxide, but there was between quality and total.sulfur.dioxide. So I figured the bound part would be what added the relationship, and I doubled back to add it.
+
+### Of the features you investigated, were there any unusual distributions? \
+Did you perform any operations on the data to tidy, adjust, or change the form \
+of the data? If so, why did you do this?
+
+Yes, because some values fell well outside their distributions, and in the end we want to draw general conclusions about what influences the quality of white wine, I decided to filter out outliers for all relevant variables. In other words: any record that had any variable with a value that lied outside its variable's 99% interval, was removed.
+
+# Bivariate Plots Section
+
+First I want to get an idea of the correlation between all variables. I do this by creating a heatmap of correlation values, as plotted below. This will hopefully point me in the direction of interesting relationships.
+
+```{r echo=FALSE, fig.width = 9, fig.height = 7, Bivariate_Plots_1}
+# Create a correlation matrix
+cors <- subset(wine.filt, select = -X) %>%
+    cor() %>%
+    mat.sort()
+# Set the upper triangle to 0 (in the resulting graph this will look white
+cors[upper.tri(cors, diag = TRUE)] <- 0
+# Flip the matrix around for readability
+cors <- cors[dim(cors)[1]:1,]
+# Turn the cors matrix into a long form dataframe so ggplot can process it
+cors <- cors %>%
+    melt() %>%
+    data.frame()
+
+# Plot the matrix
+ggplot(cors, aes(x = Var1,
+                 y = Var2,
+                 fill = value,
+				 label = sprintf("%0.2f", round(value, digits = 2)))) +
+    geom_tile() +
+    geom_text(color = "white") +
+    scale_fill_gradient2(low = hsv(0, .4, .6), mid = "white", high = hsv(0.6, .4, .6), limits = c(-1, 1)) +
+	theme_bw() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+          axis.title.x = element_blank(),
+          axis.title.y = element_blank()) +
+    ggtitle("Correlation Matrix")
+
+# Also print out the values related to quality, ordered by R
+cors.quality <- cor(wine.filt)[, "quality"] %>% round(2)
+as.matrix(cors.quality[order(cors.quality)][1:(length(cors.quality)-1)])
+```
+
+If we look at the numbers specifically related to the quality variable, we can see the strongest correlation with alcohol (.44), and inversely with density (-.31). However, there appears to exist a strong correlation between density and alcohol as well (-.81). Below all 3 bivariate relations are plotted.
+
+To draw preliminary conclusions: I'd say that instead of stating there is a relationship between quality and density, it is alcohol that is related to quality as well as to density. The intuitive idea that density would do very little to change taste/smell strengthens this conclusion.
+
+```{r echo=FALSE, fig.width = 7, fig.height = 7, Bivariate_Plots_2}
+t <- theme_bw()
+p1 <- ggplot(wine.filt, aes(x = quality, y = density)) + geom_jitter(alpha = .1) +
+    geom_smooth(method = "lm") + t
+p2 <- ggplot(wine.filt, aes(y = quality, x = alcohol)) + geom_jitter(alpha = .1) +
+    geom_smooth(method = "lm") + t
+p3 <- ggplot(wine.filt, aes(x = alcohol, y = density)) + geom_jitter(alpha = .1) +
+    geom_smooth(method = "lm") + t
+layout <- rbind(c(1, 3), c(NA, 2))
+grid.arrange(p1, p2, p3, layout_matrix = layout)
+```
+
+Other variables are correlated as well because they are related by definition, 
+e.g. total.sulfur.dioxide, bound.sulfur.dioxide and free.sulfur.dioxide,
+or the inverse relationship between acidity and pH:
+
+```{r echo=FALSE, fig.width = 9, fig.height = 5, Bivariate_Plots_3}
+t <- theme_bw()
+p1 <- ggplot(wine.filt, aes(x = total.sulfur.dioxide, y = free.sulfur.dioxide)) + geom_jitter(alpha = .1) +
+    geom_smooth(method = "lm") + t
+p2 <- ggplot(wine.filt, aes(x = fixed.acidity, y = pH)) + geom_jitter(alpha = .1) +
+    geom_smooth(method = "lm") + t
+grid.arrange(p1, p2, ncol = 2)
+```
+
+Apart from bound.sulfur.dioxide and total.sulfur.dioxide, the largest
+correlation of all exists between density and residual sugar:
+
+```{r echo=FALSE, fig.width = 7, fig.height = 7, Bivariate_Plots_4}
+t <- theme_bw()
+ggplot(wine.filt, aes(x = residual.sugar, y = density)) + geom_jitter(alpha = .1) +
+    geom_smooth(method = "lm") + t
+```
+
+This most likely because sugar has a large density and will drive up the 
+overall density significantly.
+
+And of course something can be said for non significant relationships, e.g. 
+citric acid does not appear to have any significant effect on quality.
+
+# Bivariate Analysis
+
+### Talk about some of the relationships you observed in this part of the \
+investigation. How did the feature(s) of interest vary with other features in \
+the dataset?
+
+- Of all observed features, alcohol seems to have the strongest positive effect on quality
+
+- A smaller negative correlation exists between quality and chlorides as well as volatile acidity
+
+- Regarding sulfur dioxide: there is a smaller negative relationship between bound.sulfur.dioxide and quality, but there is none between free.sulfur.dioxide and quality.
+
+### Did you observe any interesting relationships between the other features \
+(not the main feature(s) of interest)?
+
+- Density and residual sugar are largely correlated, probably due to sugar being a dense substance
+
+- Density and alcohol are largely correlated as well, meaning alcohol makes for a lighter wine
+
+### What was the strongest relationship you found?
+
+The strongest relationship that wasn't a relationship purely by definition, was between density and residual sugar (Pearson's R of 0.84)
+
+# Multivariate Plots Section
+
+I first want to visualize the relationship between density and its two largest correlated features: residual sugar and alcohol.
+
+```{r echo=FALSE, Multivariate_Plots_1}
+ggplot(wine.filt, aes(y = residual.sugar, x = alcohol, color = density)) +
+    geom_jitter(alpha = .2, size = 3) +
+    scale_color_gradient(low = hsv(0, 1, 1), high = hsv(0.6, 1, 1))
+```
+
+First of all, this visualization clearly shows more alcohol results in lower density, and more residual sugar results in higher density.
+
+It also shows that a wine with high levels of residual sugar is less likely to contain a high percentage of alcohol and vice versa. This was already shown from the correlation matrix in the previous section, showing a fairly strong negative relationship between the two.
+
+Next, I want to make a linear model based on the strongest features observed in the previous section
+
+As an experiment to learn more about how variables interact, I want to take out the variable with the most correlation with quality, being alcohol, and then check the correlations again between the residual values of the quality variable and the other variables. This is more to learn about linear models in general as well.
+
+Because alcohol is also correlated with other variables, e.g. density as discussed before, I expect certain correlations to be lower in case of variables related to alcohol level, and others to be equal or higher in case of more distinct influence unrelated to alcohol
+
+```{r echo=FALSE, Multivariate_Plots_2}
+wine.filt$quality.residual <- lm(quality ~ alcohol, wine.filt)$residuals
+round(cor(wine.filt), 2)[,c("quality", "quality.residual")]
+```
+
+As we can see, the correlation with density has already been greatly reduced because of taking alcohol out of the equation.
+
+Equally, other correlations have gone down significantly as well. Those that remain or have gone up, are:
+
+- free.sulfur.dioxide (0.14)
+- volatile.acidity (-0.22)
+
+```{r echo=FALSE, Multivariate_Plots_3}
+ggplot(wine.filt, aes(volatile.acidity, quality.residual)) + geom_point(alpha = .2)
+ggplot(wine.filt, aes(free.sulfur.dioxide, quality.residual)) + geom_point(alpha = .2)
+ggplot(wine.filt, aes(color = alcohol, y = quality, x = free.sulfur.dioxide)) +
+    geom_jitter(alpha = .1, size = 4) +
+    scale_color_gradient2(low = "blue", mid = "white", high = "red", midpoint = 11) +
+	geom_smooth()
+```
+
+The first model I make is only based on alcohol
+
+```{r echo=FALSE, Multivariate_Plots_4}
+wine.filt <- subset(wine.filt, select=-quality.residual)
+m1 <- lm(quality ~ alcohol, wine.filt)
+summary(m1)
+```
+
+Now we'll add the influence of residual sugar to the model.
+
+```{r echo=FALSE, Multivariate_Plots_5}
+m2 <- update(m1, ~ . + residual.sugar)
+summary(m2)
+```
+
+Now just add all others to the model, just to see what comes out:
+
+```{r echo=FALSE, Multivariate_Plots_6}
+m3 <- update(m2, ~ . + fixed.acidity + volatile.acidity + citric.acid + chlorides + free.sulfur.dioxide + bound.sulfur.dioxide + sulphates)
+summary(m3)
+```
+
+A peculiar thing is that above we saw a stronger correlation between quality and bound sulfur dioxide as opposed to none between quality and free sulfur dioxide, whereas here this seems to be the reverse. This could be due to Simpson's Paradox.
+
+I decide to only keep the variables in the model that show the strongest relationship to quality. So ignoring the latest update, I update m2 again, this time only with volatile.acidity and free.sulfur.dioxide.
+
+```{r echo=FALSE, Multivariate_Plots_7}
+m3 <- update(m2, ~ . + volatile.acidity + free.sulfur.dioxide)
+summary(m3)
+```
+
+Now I'd like to check my model by looking at the error term. I do this by generating a fitted quality value, and making a density plot of the difference between fitted value and actual value.
+
+```{r echo=FALSE, Multivariate_Plots_8}
+wine.filt$quality.fitted <- predict(m3)
+residual.mean <- with(wine.filt, mean(quality - quality.fitted))
+residual.sd <- with(wine.filt, sd(quality - quality.fitted))
+with(wine.filt, sd(quality))
+ggplot(data = wine.filt, aes(x = quality - quality.fitted)) +
+    geom_density() +
+	stat_function(fun = dnorm, args = list(mean=residual.mean, sd=residual.sd))
+```
+
+I also calculated the mean and SD, and overlaid a normal distribution with these values. As you can see, the error term of our model follows a normal distribution nicely around 0. The SD however (0.744) is still fairly large, almost showing as much variation as the quality measure on its own (0.867). This would invite to explore other relationships further, perhaps with other variables. It could also suggest that a large part of quality is personal preference noisy due to the subjective nature of the variable.
+
+# Multivariate Analysis
+
+### Talk about some of the relationships you observed in this part of the \
+investigation. Were there features that strengthened each other in terms of \
+looking at your feature(s) of interest?
+
+The interesting part here is that the effect of any variable can change entirely depending on whether or not the effect of other variables is compensated for. For example in the case of the effect of free and bound sulfur dioxide on quality.
+
+### Were there any interesting or surprising interactions between features?
+
+In the beginning of the analysis, I created a bound sulfur dioxide variable because at first there seemed to be a larger correlation between this and quality than free sulfur dioxide and quality. The reverse seemed true once all effects between supporting features were taken into account by the model.
+
+### OPTIONAL: Did you create any models with your dataset? Discuss the \
+strengths and limitations of your model.
+
+I created a linear model using the features that appeared to have the strongest effect on the variable of interest. It does provide a rough calculation to predict a quality based on these features. However, the residual SD is still fairly large, suggesting there may be many more factors at play that influence the resulting quality score. My suspicion is that the subjectivity of the output variable plays a role in the variability of this score most of all.
+
+------
+
+# Final Plots and Summary
+
+> **Tip**: You've done a lot of exploration and have built up an understanding
+of the structure of and relationships between the variables in your dataset.
+Here, you will select three plots from all of your previous exploration to
+present here as a summary of some of your most interesting findings. Make sure
+that you have refined your selected plots for good titling, axis labels (with
+units), and good aesthetic choices (e.g. color, transparency). After each plot,
+make sure you justify why you chose each plot by describing what it shows.
+
+### Plot One
+```{r echo=FALSE, fig.width = 7, fig.height = 6, Plot_One}
+ggplot(wine.filt, aes(y = residual.sugar, x = alcohol, color = density, size = density)) +
+  geom_jitter(alpha = .1) +
+  scale_color_gradient(low = hsv(0, 1, 1), high = hsv(0.6, 1, 1)) +
+  theme_bw() +
+  ggtitle("Residual Sugar vs Alcohol Level") +
+  xlab("Alcohol [Vol %]") +
+  ylab("Residual Sugar [g / dm^3]")
+```
+
+### Description One
+The graph shows the following information:
+
+- Y (dependent variable): Residual sugar level
+- X (independent variable): Alcohol volume percentage
+- Size and color: Density
+
+Some observations in this graph:
+
+- In general, when there's a high alcohol percentage, there's less likely to be a high amount of residual sugar, and vice versa, when there's a low alcohol percentage, there's more likely to be a high amount of residual sugar.
+- The effect of density is easier to see by the size than by the color.
+- Density is the highest with high amounts of residual sugar and low amounts of alcohol. Vice versa, density is the lowest with low residual sugar and high alcohol.
+
+### Plot Two
+```{r echo=FALSE, Plot_Two}
+
+```
+
+### Description Two
+
+
+### Plot Three
+```{r echo=FALSE, Plot_Three}
+
+```
+
+### Description Three
+
+------
+
+# Reflection
+
+The big discovery for me is that it's hard to know when you're done, because there's no one right way to go through a dataset. With every variable the amount of relationships in the data that can be explored grows exponentially. Starting with a clear question helps with narrowing the investigation.
+
+The biggest struggle was on how to interpret the correlations and the model. It's not simply a matter of pushing a dataset through some formulas. Some domain knowledge is required and careful study of what is related to what.
+
+There is possible further investigation that could be done. After fitting the model, there was still a fairly large variation in the residuals. One reason this might be is that all these variables explore properties of the wine, but none explore properties of the people testing. The quality of a wine very much depends on who does the judging, which is the side of the equation that is not explored here.
